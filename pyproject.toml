@@ -1,0 +1,15 @@
+[project]
+name = "invest-agent"
+version = "0.1.0"
+description = "Buffett-Style Investment Agent using LangChain and LangGraph"
+requires-python = ">=3.9"
+dependencies = [
+    "langchain",
+    "langgraph",
+    "langchain-openai",
+    "yfinance",
+    "requests",
+    "numpy",
+    "pandas",
+    "python-dotenv",
+]

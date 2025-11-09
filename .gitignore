@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.egg-info/
+.eggs/
+.build/
+dist/
+build/
+.coverage*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+.pyre/
+
+# Environments
+.venv/
+venv/
+.env
+*.env
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Reports (keep marker file)
+reports/*.md
+!reports/.gitkeep
+
+# Caches & locks
+uv.lock
+**/__pycache__/
+
+# Local tooling
+*.log
+
+# Misc
+**/.cache/
