@@ -114,33 +114,13 @@ export OPENAI_MODEL=gpt-4o-mini
 ```
 
 3. 執行管線：
-4. 在 `reports/` 檢視輸出（例如 `reports/20251109_AAPL.md`）。
-    - 若未設定 `OPENAI_API_KEY`，LLM 節點會回退為可預期的啟發式輸出，報告仍包含「LLM Strategy / LLM Narrative」章節。
-## Project Layout
-# 巴菲特風格多代理 MVP
-
-本儲存庫實作一個可投入生產的、受巴菲特啟發的美股研究管線。系統協作專職代理完成篩選、基本面、新聞、估值、風險與報告輸出。
-
-## 功能
-
-- **LangGraph 編排**：決定性狀態機，在 InputSupervisor、CandidateScreener、FundamentalsAnalyst、NewsIntelligence、ValuationModel、RiskAssessment、MarkdownReporter 等代理之間傳遞結果。
-- **直接 yfinance 工具**：使用 `yfinance` 之 Yahoo Finance 包裝器，搭配 Pydantic I/O 驗證、重試與結構化回應。
-- **巴菲特式分析**：品質指標（ROIC、毛利率、營益率、FCF CAGR、負債覆蓋）、多方法估值（DCF + 倍數）、保守倉位規則。
-- **新聞智能**：NLP 去重、摘要、時間軸、情緒、主題標註，支援可設定的回溯視窗。
-- **可重現 CLI**：`python main.py --tickers AAPL,MSFT --news-window 14 --max-news 30` 於 `reports/` 產生日誌化 Markdown 報告。
-- **測試覆蓋**：Pytest 驗證工具行為、NLP、估值數學，以及端到端模擬。
-
-## 快速開始
-
-1. 安裝相依：`pip install -r requirements.txt`
-2. 執行管線：
 
 ```bash
 python main.py --tickers AAPL,MSFT --news-window 14 --max-news 30
 ```
 
-4. 於 `reports/` 檢視輸出（如 `reports/20251109_AAPL.md`）。
-
+4. 在 `reports/` 檢視輸出（例如 `reports/20251109_AAPL.md`）。
+    - 若未設定 `OPENAI_API_KEY`，LLM 節點會回退為可預期的啟發式輸出，報告仍包含「LLM Strategy / LLM Narrative」章節。
 ## 測試
 
 執行完整套件：
@@ -157,7 +137,7 @@ pytest
 
 也可在呼叫 `graph.run_pipeline` 時，於輸入字典中直接提供這些值。
 
-## Project Layout
+## 專案結構
 
 ```
 README.md
