@@ -25,6 +25,24 @@ class MarkdownReporterAgent:
         return "Summary unavailable."
 
     @staticmethod
+    def _trim_sentences(text: str, max_sentences: int = 2, max_chars: int = 600) -> str:
+        if not text:
+            return text
+        seps = [". ", "。", "! ", "？", "? "]
+        # naive sentence split
+        parts = [text]
+        for sep in seps:
+            tmp = []
+            for p in parts:
+                tmp.extend(p.split(sep))
+            parts = tmp
+        parts = [p.strip() for p in parts if p.strip()]
+        trimmed = ". ".join(parts[:max_sentences])
+        if len(trimmed) > max_chars:
+            trimmed = trimmed[: max_chars - 1] + "…"
+        return trimmed
+
+    @staticmethod
     def _economic_moat(metrics: Dict) -> str:
         moat_signals = []
         roic = metrics.get("roic") if metrics else None
@@ -79,6 +97,27 @@ class MarkdownReporterAgent:
         return "\n".join(lines)
 
     @staticmethod
+    def _snapshot_table(price: float | None, intrinsic_mid: float | None, mos: float | None, metrics: Dict, risk_flags: List[str], sentiment: float | None) -> str:
+        def fmt_usd(v):
+            return f"${v:,.2f}" if v is not None else "NA"
+        def fmt_pct(v):
+            return f"{v*100:.1f}%" if v is not None else "NA"
+        rows = [
+            ("Price", fmt_usd(price)),
+            ("Intrinsic (mid)", fmt_usd(intrinsic_mid)),
+            ("MOS", fmt_pct(mos)),
+            ("ROIC", fmt_pct(metrics.get("roic"))),
+            ("Gross Margin", fmt_pct(metrics.get("gross_margin"))),
+            ("Operating Margin", fmt_pct(metrics.get("operating_margin"))),
+            ("Risk Flags", ", ".join(risk_flags) if risk_flags else "None"),
+            ("Sentiment", f"{sentiment:.2f}" if sentiment is not None else "NA"),
+        ]
+        md = ["| Item | Value |", "|:-----|------:|"]
+        for k, v in rows:
+            md.append(f"| {k} | {v} |")
+        return "\n".join(md)
+
+    @staticmethod
     def _risk_section(risk_entry: Dict) -> str:
         flags = risk_entry.get("flags", [])
         lines = []
@@ -95,12 +134,17 @@ class MarkdownReporterAgent:
     @staticmethod
     def _news_section(news_entry: Dict, window_days: int) -> str:
         bullets = news_entry.get("bullets") or ["No material items detected."]
+        max_bullets = 5
+        shown = bullets[:max_bullets]
         timeline = news_entry.get("timeline") or []
         sentiment = news_entry.get("sentiment")
         topics = news_entry.get("topics") or []
         sources = news_entry.get("sources") or []
+        total = news_entry.get("item_count") or len(bullets)
 
-        bullet_md = "\n".join(f"- {point}" for point in bullets)
+        bullet_md = "\n".join(f"- {point}" for point in shown)
+        if total > len(shown):
+            bullet_md += f"\n- … and {total - len(shown)} more"
         timeline_md = "\n".join(
             f"- {item['date']} — {item['summary']} ([source]({item['url']}))"
             for item in timeline if item.get("date") and item.get("summary") and item.get("url")
@@ -112,7 +156,26 @@ class MarkdownReporterAgent:
         section = f"## News & Text Intelligence (last {window_days} days)\n{bullet_md}\n\n### Timeline\n{timeline_md}\n\n{sentiment_line}\n\n{topics_line}\n\n### Source List\n{sources_md}"
         return section
 
-    def _compose(self, ticker: str, info: Dict, metrics: Dict, valuation: Dict, risk_entry: Dict, news_entry: Dict, window_days: int, llm_strategy: Dict | None = None, llm_narrative: Dict | None = None, llm_tool: Dict | None = None) -> str:
+    def _compose(self, ticker: str, info: Dict, metrics: Dict, valuation: Dict, risk_entry: Dict, news_entry: Dict, window_days: int) -> str:
+        # derive key numbers
+        intrinsic = (valuation or {}).get("intrinsic_value_range", {})
+        price = (valuation or {}).get("price")
+        mid = intrinsic.get("mid")
+        mos = (valuation or {}).get("margin_of_safety")
+        flags = (risk_entry or {}).get("flags", [])
+        allowed = bool((risk_entry or {}).get("allowed"))
+        position_weight = (risk_entry or {}).get("position_weight") or 0.0
+        verdict = "✅ Accumulate" if allowed and (mos or 0) > 0 else "❌ Pass"
+        sentiment = (news_entry or {}).get("sentiment")
+
+        # trimmed summary for readability
+        raw_summary = self._info_summary(info)
+        summary_text = self._trim_sentences(raw_summary, max_sentences=2, max_chars=600)
+
+        price_str = f"{price:.2f}" if price is not None else "NA"
+        mid_str = f"{mid:.2f}" if mid is not None else "NA"
+        sent_str = f"{sentiment:.2f}" if sentiment is not None else "NA"
+
         content = [
             f"# {ticker} Research (Buffett Style)",
             "- Business summary & circle of competence",
@@ -122,8 +185,15 @@ class MarkdownReporterAgent:
             "- Risk factors",
             "- ✅ Decision & sizing",
             "",
+            "## Executive Summary",
+            f"- Verdict: {verdict} | Position: {position_weight:.0%} | MOS: {mos*100:.1f}%" if mos is not None else f"- Verdict: {verdict} | Position: {position_weight:.0%}",
+            f"- Rationale: price {price_str} vs intrinsic mid {mid_str}; risk flags: {', '.join(flags) if flags else 'None'}; sentiment: {sent_str}",
+            "",
+            "### Snapshot",
+            self._snapshot_table(price, mid, mos, metrics or {}, flags, sentiment),
+            "",
             "## Business Summary",
-            self._info_summary(info),
+            summary_text,
             "",
             "## Economic Moat",
             self._economic_moat(metrics),
@@ -138,25 +208,8 @@ class MarkdownReporterAgent:
             self._risk_section(risk_entry or {}),
             "",
             self._news_section(news_entry or {}, window_days),
-        ]
-        if llm_strategy and llm_strategy.get("strategy_comment"):
-            content += [
-                "",
-                "## LLM Strategy",
-                llm_strategy.get("strategy_comment", ""),
-            ]
-        if llm_narrative and llm_narrative.get("narrative"):
-            content += [
-                "",
-                "## LLM Narrative",
-                llm_narrative.get("narrative", ""),
-            ]
-        if llm_tool and llm_tool.get("tool_summary"):
-            content += [
-                "",
-                "## LLM Tool Agent",
-                llm_tool.get("tool_summary", ""),
-            ]
+    ]
+    # SummaryAgent insight 於 run() 階段注入
         return "\n".join(content)
 
     def _write_report(self, ticker: str, content: str) -> Path:
@@ -170,9 +223,7 @@ class MarkdownReporterAgent:
         valuations = {item.get("ticker"): item for item in state.get("valuation", [])}
         risks = {item.get("ticker"): item for item in state.get("risk", [])}
         news_bundle = {item.get("ticker"): item for item in state.get("news_bundle", [])}
-        llm_strategy_map = {item.get("ticker"): item for item in state.get("llm_strategy", [])}
-        llm_narrative_map = {item.get("ticker"): item for item in state.get("llm_narrative", [])}
-        llm_tool_map = {item.get("ticker"): item for item in state.get("llm_tool_agent", [])}
+        summary_map = {item.get("ticker"): item for item in state.get("summary_insight", [])}
         params = state.get("params", {})
         window_days = params.get("news_window_days", 14)
 
@@ -194,10 +245,11 @@ class MarkdownReporterAgent:
                 risk_entry=risks.get(ticker, {}),
                 news_entry=news_bundle.get(ticker, {}),
                 window_days=window_days,
-                llm_strategy=llm_strategy_map.get(ticker),
-                llm_narrative=llm_narrative_map.get(ticker),
-                llm_tool=llm_tool_map.get(ticker),
             )
+            # Inject Summary Insight block
+            summary_entry = summary_map.get(ticker)
+            if summary_entry and summary_entry.get("summary"):
+                content += "\n\n## Summary Insight\n" + summary_entry.get("summary", "")
             last_path = self._write_report(ticker, content)
         if last_path is None:
             raise RuntimeError("Reporter produced no output (no candidates or fundamentals)")

@@ -1,7 +1,7 @@
 # 巴菲特風格多代理 MVP
 本儲存庫實作一個可投入生產的、受巴菲特啟發的美股研究管線。系統使用 LangGraph 協作專職代理，完成輸入正規化、候選篩選、基本面蒐集、新聞整合、內在價值評估、風險評估，並輸出精簡的 Markdown 研究報告。
 ## 功能
-- **LangGraph 編排**：決定性狀態機，按序在 InputSupervisor → CandidateScreener → FundamentalsAnalyst/NewsIntelligence（並行）→ ValuationModel → RiskAssessment → StrategySynthesis/NarrativeWriter/ToolReasoning（並行）→ MarkdownReporter 之間傳遞結果。
+- **LangGraph 編排**：決定性狀態機，按序在 InputSupervisor → CandidateScreener → FundamentalsAnalyst/NewsIntelligence（並行）→ ValuationModel → RiskAssessment → SummaryAgent → MarkdownReporter 之間傳遞結果。
 
 ### 流程步驟詳解
 
@@ -43,35 +43,23 @@
     - 輸出鍵：`risk`（flags、allowed、position_weight、margin_of_safety）
     - 政策：僅在 MOS > 0 且槓桿可接受時給予最大倉位（預設 10%）。
 
-7. **StrategySynthesis**（`agents/strategy_synthesis.py`）
-    - 目的：LLM（或啟發式回退）產出倉位策略與理由。
-    - 輸入鍵：`fundamentals`、`valuation`、`risk`
-    - 輸出鍵：`llm_strategy`（每檔含 strategy_comment）
-    - 回退：無 OpenAI 金鑰或模型不可用時，輸出可預期的中文摘要。
-
-8. **NarrativeWriter**（`agents/narrative_writer.py`）
-    - 目的：LLM（或啟發式）整合敘事（護城河、估值、情緒、風險、追蹤重點）。
+7. **SummaryAgent**（`agents/summary_agent.py`）
+    - 目的：以單一 LLM（或啟發式回退）整合估值、風險與新聞資訊，輸出精簡的投資重點與追蹤建議。
     - 輸入鍵：`fundamentals`、`valuation`、`risk`、`news_bundle`
-    - 輸出鍵：`llm_narrative`（每檔含 narrative）
-    - 回退：從可得指標與情緒組裝條列。
+    - 輸出鍵：`summary_insight`（每檔含 summary）
+    - 回退：無 OpenAI 金鑰時以啟發式組裝 3–5 條條列；仍保留 MOS、情緒、風險旗標。
 
-9. **ToolReasoning**（`agents/tool_reasoning.py`）
-    - 目的：以工具核對（價格、基本面、新聞）並輸出精簡驗證摘要。
-    - 輸入鍵：`valuation`、`risk`、`news_bundle`、`fundamentals`
-    - 輸出鍵：`llm_tool_agent`（每檔含 tool_summary）
-    - 韌性：若無法使用 create_react_agent，退化為簡易執行器。
-
-10. **MarkdownReporter**（`agents/markdown_reporter.py`）
+8. **MarkdownReporter**（`agents/markdown_reporter.py`）
      - 目的：為每檔股票組裝最終 Markdown 報告。
      - 輸入鍵：前述所有輸出；若 `fundamentals` 缺失則以 `candidates` 骨架輸出。
      - 輸出鍵：`report_path`（最後產生的路徑）
-     - 章節：摘要、護城河、財務表、估值、風險、新聞、LLM Strategy、LLM Narrative、LLM Tool Agent。
+     - 章節：Executive Summary、Snapshot、Business Summary、Economic Moat、Key Financials、Intrinsic Valuation、Risk Factors、News & Text Intelligence、Summary Insight。
 
 ### 資料流與 Join Gate
-並行：FundamentalsAnalyst 與 NewsIntelligence 於 CandidateScreener 後並行執行。Join Gate 確保在進入 LLM 階段前，同時具備新聞與風險（取決於估值/基本面）。接著由 llm_fanout 觸發三個 LLM 節點（StrategySynthesis / NarrativeWriter / ToolReasoning）並行執行，最終於 llm_join 匯流，再交由 Reporter 產出報告。
+並行：FundamentalsAnalyst 與 NewsIntelligence 於 CandidateScreener 後並行執行。Join Gate 確保在進入 SummaryAgent 前，同時具備新聞與風險（風險需估值先完成）。SummaryAgent 取代過去的 Strategy / Narrative / Tool 三 LLM 節點，降低延遲與並行寫入衝突。最後交由 Reporter 輸出報告。
 
 ### 狀態鍵總覽
-`params`、`candidates`、`fundamentals`、`news_bundle`、`valuation`、`risk`、`llm_strategy`、`llm_narrative`、`llm_tool_agent`、`report_path`
+`params`、`candidates`、`fundamentals`、`news_bundle`、`valuation`、`risk`、`summary_insight`、`report_path`
 
 所有節點只回傳增量（delta，更新子集），以避免並行寫入衝突。
 
@@ -88,24 +76,17 @@ flowchart TD
     F --> G[RiskAssessment]
     E --> H[Join Gate]
     G --> H
-    H --> N[LLM Fanout]
-    N --> I[StrategySynthesis]
-    N --> J[NarrativeWriter]
-    N --> K[ToolReasoning]
-    I --> O[LLM Join]
-    J --> O[LLM Join]
-    K --> O[LLM Join]
-    O --> L[MarkdownReporter]
+    H --> I[SummaryAgent]
+    I --> L[MarkdownReporter]
     L --> M[END]
 
     %% Notes
     classDef join fill:#f8f8f8,stroke:#999,stroke-dasharray: 3 3
     class H join
-    class O join
 ```
 
 簡述：
-- Screener 之後並行執行基本面與新聞管線，於 Join Gate 匯流後進入 LLM 並行階段（由 llm_fanout 觸發，llm_join 匯流）。
+- Screener 之後並行執行基本面與新聞管線，於 Join Gate 匯流後直接進入 SummaryAgent（單一 LLM / 啟發式）。
 - Reporter 支援在缺基本面時以 candidates 輸出骨架報告（容錯）。
 
 ## 快速開始
@@ -125,7 +106,7 @@ python main.py --tickers AAPL,MSFT --news-window 14 --max-news 30
 ```
 
 4. 在 `reports/` 檢視輸出（例如 `reports/20251109_AAPL.md`）。
-    - 若未設定 `OPENAI_API_KEY`，LLM 節點會回退為可預期的啟發式輸出，報告仍包含「LLM Strategy / LLM Narrative」章節。
+    - 若未設定 `OPENAI_API_KEY`，SummaryAgent 會回退為啟發式摘要（仍包含 MOS / 風險 / 情緒條列）。
 ## 測試
 
 執行完整套件：
@@ -155,9 +136,7 @@ agents/
     news_intelligence.py
     valuation_model.py
     risk_assessment.py
-    strategy_synthesis.py
-    narrative_writer.py
-    tool_reasoning.py
+    summary_agent.py
     markdown_reporter.py
 graph/
     orchestrator.py
