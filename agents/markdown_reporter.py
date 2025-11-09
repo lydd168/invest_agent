@@ -185,6 +185,14 @@ class MarkdownReporterAgent:
             "- Risk factors",
             "- ✅ Decision & sizing",
             "",
+            "## Decision Box",
+            (
+                f"> Verdict: {verdict} | Position: {position_weight:.0%} | MOS: {mos*100:.1f}%"
+                if mos is not None
+                else f"> Verdict: {verdict} | Position: {position_weight:.0%}"
+            ),
+            f"> Rationale: price {price_str} vs intrinsic mid {mid_str}; risk flags: {', '.join(flags) if flags else 'None'}; sentiment: {sent_str}",
+            "",
             "## Executive Summary",
             f"- Verdict: {verdict} | Position: {position_weight:.0%} | MOS: {mos*100:.1f}%" if mos is not None else f"- Verdict: {verdict} | Position: {position_weight:.0%}",
             f"- Rationale: price {price_str} vs intrinsic mid {mid_str}; risk flags: {', '.join(flags) if flags else 'None'}; sentiment: {sent_str}",
