@@ -232,6 +232,7 @@ class MarkdownReporterAgent:
         risks = {item.get("ticker"): item for item in state.get("risk", [])}
         news_bundle = {item.get("ticker"): item for item in state.get("news_bundle", [])}
         summary_map = {item.get("ticker"): item for item in state.get("summary_insight", [])}
+        summary_meta_map = {item.get("ticker"): item for item in state.get("summary_meta", [])}
         params = state.get("params", {})
         window_days = params.get("news_window_days", 14)
 
@@ -258,6 +259,15 @@ class MarkdownReporterAgent:
             summary_entry = summary_map.get(ticker)
             if summary_entry and summary_entry.get("summary"):
                 content += "\n\n## Summary Insight\n" + summary_entry.get("summary", "")
+
+            # Optional debug tailnote for SummaryAgent mode
+            meta_entry = summary_meta_map.get(ticker)
+            if meta_entry and meta_entry.get("mode"):
+                mode = meta_entry.get("mode")
+                reason = meta_entry.get("reason")
+                content += "\n\n---\n### Debug: SummaryAgent\n" + f"- mode: {mode}"
+                if reason:
+                    content += f"\n- reason: {reason}"
             last_path = self._write_report(ticker, content)
         if last_path is None:
             raise RuntimeError("Reporter produced no output (no candidates or fundamentals)")
