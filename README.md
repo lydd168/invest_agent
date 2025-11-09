@@ -1,7 +1,7 @@
 # 巴菲特風格多代理 MVP
 本儲存庫實作一個可投入生產的、受巴菲特啟發的美股研究管線。系統使用 LangGraph 協作專職代理，完成輸入正規化、候選篩選、基本面蒐集、新聞整合、內在價值評估、風險評估，並輸出精簡的 Markdown 研究報告。
 ## 功能
-- **LangGraph 編排**：決定性狀態機，按序在 InputSupervisor → CandidateScreener → FundamentalsAnalyst/NewsIntelligence（並行）→ ValuationModel → RiskAssessment → StrategySynthesis → NarrativeWriter → ToolReasoning → MarkdownReporter 之間傳遞結果。
+- **LangGraph 編排**：決定性狀態機，按序在 InputSupervisor → CandidateScreener → FundamentalsAnalyst/NewsIntelligence（並行）→ ValuationModel → RiskAssessment → StrategySynthesis/NarrativeWriter/ToolReasoning（並行）→ MarkdownReporter 之間傳遞結果。
 
 ### 流程步驟詳解
 
@@ -68,7 +68,7 @@
      - 章節：摘要、護城河、財務表、估值、風險、新聞、LLM Strategy、LLM Narrative、LLM Tool Agent。
 
 ### 資料流與 Join Gate
-並行：FundamentalsAnalyst 與 NewsIntelligence 於 CandidateScreener 後並行執行。Join Gate 確保在進入 LLM 序列前，同時具備新聞與風險（取決於估值/基本面）；以條件邊與 wait/noop 迴圈實作。
+並行：FundamentalsAnalyst 與 NewsIntelligence 於 CandidateScreener 後並行執行。Join Gate 確保在進入 LLM 階段前，同時具備新聞與風險（取決於估值/基本面）。接著由 llm_fanout 觸發三個 LLM 節點（StrategySynthesis / NarrativeWriter / ToolReasoning）並行執行，最終於 llm_join 匯流，再交由 Reporter 產出報告。
 
 ### 狀態鍵總覽
 `params`、`candidates`、`fundamentals`、`news_bundle`、`valuation`、`risk`、`llm_strategy`、`llm_narrative`、`llm_tool_agent`、`report_path`
@@ -88,19 +88,24 @@ flowchart TD
     F --> G[RiskAssessment]
     E --> H[Join Gate]
     G --> H
-    H --> I[StrategySynthesis]
-    I --> J[NarrativeWriter]
-    J --> K[ToolReasoning]
-    K --> L[MarkdownReporter]
+    H --> N[LLM Fanout]
+    N --> I[StrategySynthesis]
+    N --> J[NarrativeWriter]
+    N --> K[ToolReasoning]
+    I --> O[LLM Join]
+    J --> O[LLM Join]
+    K --> O[LLM Join]
+    O --> L[MarkdownReporter]
     L --> M[END]
 
     %% Notes
     classDef join fill:#f8f8f8,stroke:#999,stroke-dasharray: 3 3
     class H join
+    class O join
 ```
 
 簡述：
-- Screener 之後並行執行基本面與新聞管線，於 Join Gate 匯流後進入 LLM 階段。
+- Screener 之後並行執行基本面與新聞管線，於 Join Gate 匯流後進入 LLM 並行階段（由 llm_fanout 觸發，llm_join 匯流）。
 - Reporter 支援在缺基本面時以 candidates 輸出骨架報告（容錯）。
 
 ## 快速開始

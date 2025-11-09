@@ -83,7 +83,8 @@ def run_pipeline(user_input: Dict) -> Path:
 
     # Join gate to ensure both news and risk are ready before advancing to LLMs
     def join_gate_node(state: PipelineState) -> PipelineState:
-        return state
+        # 不寫入任何鍵，避免並行寫入衝突
+        return {}
 
     def _join_ready(state: PipelineState) -> str:
         candidates = state.get("candidates") or []
@@ -93,16 +94,30 @@ def run_pipeline(user_input: Dict) -> Path:
         return "ready" if has_news and has_risk else "wait"
 
     def llm_strategy_node(state: PipelineState) -> PipelineState:
+        # 策略生成不依賴敘事/工具，可並行
         llm_strategy_agent.run(state)
         return {"llm_strategy": state.get("llm_strategy", [])}  # type: ignore[return-value]
 
     def llm_narrative_node(state: PipelineState) -> PipelineState:
+        # 敘事生成不依賴策略結果（只用 fundamentals/valuation/risk/news），可並行
         llm_narrative_agent.run(state)
         return {"llm_narrative": state.get("llm_narrative", [])}  # type: ignore[return-value]
 
     def llm_tool_node(state: PipelineState) -> PipelineState:
+        # 工具驗證僅依賴 fundamentals/valuation/risk/news，可並行
         llm_tool_agent.run(state)
         return {"llm_tool_agent": state.get("llm_tool_agent", [])}  # type: ignore[return-value]
+
+    # Gate to wait for all three LLM outputs before reporting
+    def llm_join_node(state: PipelineState) -> PipelineState:
+        # 不寫入任何鍵，避免並行寫入衝突
+        return {}
+
+    def _llm_ready(state: PipelineState) -> str:
+        has_strategy = bool(state.get("llm_strategy"))
+        has_narrative = bool(state.get("llm_narrative"))
+        has_tool = bool(state.get("llm_tool_agent"))
+        return "ready" if (has_strategy and has_narrative and has_tool) else "wait"
 
     def reporter_node(state: PipelineState) -> PipelineState:
         path = reporter.run(state)
@@ -127,6 +142,11 @@ def run_pipeline(user_input: Dict) -> Path:
     graph.add_node("llm_strategy", llm_strategy_node)
     graph.add_node("llm_narrative", llm_narrative_node)
     graph.add_node("llm_tool_agent", llm_tool_node)
+    graph.add_node("llm_join", llm_join_node)
+    # fanout 觸發器，避免 join_gate 因多來源重複觸發三個 LLM 節點
+    def llm_fanout_node(state: PipelineState) -> PipelineState:
+        return {}
+    graph.add_node("llm_fanout", llm_fanout_node)
     graph.add_node("reporter", reporter_node)
     graph.add_node("noop", noop_node)
 
@@ -141,19 +161,32 @@ def run_pipeline(user_input: Dict) -> Path:
     # Fan-in gate fed by risk and news
     graph.add_edge("risk", "join_gate")
     graph.add_edge("news", "join_gate")
-    # Conditional advance only when both ready
+    # 當 join ready 才觸發 fanout，一次性分派三個 LLM 節點
     try:
         graph.add_conditional_edges(
             "join_gate",
             _join_ready,
-            {"ready": "llm_strategy", "wait": "noop"},
+            {"ready": "llm_fanout", "wait": "noop"},
         )
     except Exception:
-        # Fallback when conditional edges unsupported: proceed directly
-        graph.add_edge("join_gate", "llm_strategy")
-    graph.add_edge("llm_strategy", "llm_narrative")
-    graph.add_edge("llm_narrative", "llm_tool_agent")
-    graph.add_edge("llm_tool_agent", "reporter")
+        graph.add_edge("join_gate", "llm_fanout")
+    # 並行執行三個 LLM 節點（由 fanout 觸發，避免 join_gate 被多次書寫觸發）
+    graph.add_edge("llm_fanout", "llm_strategy")
+    graph.add_edge("llm_fanout", "llm_narrative")
+    graph.add_edge("llm_fanout", "llm_tool_agent")
+    # 匯流節點
+    graph.add_edge("llm_strategy", "llm_join")
+    graph.add_edge("llm_narrative", "llm_join")
+    graph.add_edge("llm_tool_agent", "llm_join")
+    try:
+        graph.add_conditional_edges(
+            "llm_join",
+            _llm_ready,
+            {"ready": "reporter", "wait": "noop"},
+        )
+    except Exception:
+        # fallback: 直接連到 reporter（可能多次觸發）
+        graph.add_edge("llm_join", "reporter")
     graph.add_edge("reporter", END)
 
     app = graph.compile()
