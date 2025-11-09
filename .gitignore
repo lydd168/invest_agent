@@ -32,8 +32,8 @@ venv/
 .ipynb_checkpoints/
 
 # Reports (keep marker file)
-reports/*.md
-!reports/.gitkeep
+#reports/*.md    
+#!reports/.gitkeep
 
 # Caches & locks
 uv.lock
